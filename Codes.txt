@@ -1,0 +1,130 @@
+Code:
+
+# ---------------------------------------------
+# HR Analytics Using Naive Bayes (PySpark)
+# ---------------------------------------------
+
+# Compatibility Fix for Python 3.12 / 3.13 (distutils removed)
+import sys, setuptools
+sys.modules['distutils'] = setuptools._distutils
+
+# Import Libraries
+from pyspark.sql import SparkSession
+from pyspark.ml.feature import StringIndexer, VectorAssembler
+from pyspark.ml.classification import NaiveBayes
+from pyspark.ml.evaluation import MulticlassClassificationEvaluator
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+
+# ---------------------------------------------
+# 1. Initialize Spark Session
+# ---------------------------------------------
+spark = SparkSession.builder.appName("HR Analytics - Naive Bayes").getOrCreate()
+
+# ---------------------------------------------
+# 2. Load Dataset
+# ---------------------------------------------
+df = spark.read.csv("C:/Users/hp/Downloads/HR_comma_sep.csv", header=True, inferSchema=True)
+df.printSchema()
+
+# ---------------------------------------------
+# 3. Encode Categorical Columns
+# ---------------------------------------------
+indexer_salary = StringIndexer(inputCol="salary", outputCol="salary_index")
+indexer_dept = StringIndexer(inputCol="sales", outputCol="dept_index")
+
+df_indexed = indexer_salary.fit(df).transform(df)
+df_indexed = indexer_dept.fit(df_indexed).transform(df_indexed)
+
+# ---------------------------------------------
+# 4. Assemble Features
+# ---------------------------------------------
+feature_cols = [
+    'satisfaction_level', 'last_evaluation', 'number_project',
+    'average_montly_hours', 'promotion_last_5years',
+    'salary_index', 'dept_index'
+]
+
+assembler = VectorAssembler(inputCols=feature_cols, outputCol="features")
+final_data = assembler.transform(df_indexed).select("features", df_indexed["left"].alias("label"))
+
+# ---------------------------------------------
+# 5. Split Dataset
+# ---------------------------------------------
+train_data, test_data = final_data.randomSplit([0.7, 0.3], seed=42)
+
+# ---------------------------------------------
+# 6. Train Naive Bayes Model
+# ---------------------------------------------
+nb = NaiveBayes(smoothing=1.0, modelType="multinomial")
+model = nb.fit(train_data)
+
+# ---------------------------------------------
+# 7. Make Predictions
+# ---------------------------------------------
+predictions = model.transform(test_data)
+
+# ---------------------------------------------
+# 8. Model Evaluation
+# ---------------------------------------------
+evaluator = MulticlassClassificationEvaluator(
+    labelCol="label", predictionCol="prediction", metricName="accuracy"
+)
+accuracy = evaluator.evaluate(predictions)
+print(f"Naive Bayes Model Accuracy: {accuracy:.4f}")
+
+# Display confusion matrix
+predictions.groupBy("label", "prediction").count().show()
+
+# ---------------------------------------------
+# 9. Visualization (Dashboard)
+# ---------------------------------------------
+pdf = predictions.select("label", "prediction").toPandas()
+df_pd = df_indexed.toPandas()
+
+sns.set(style="whitegrid")
+plt.figure(figsize=(18, 12))
+
+# 1. Attrition Distribution
+plt.subplot(2, 3, 1)
+sns.countplot(x='left', data=df_pd, palette='viridis')
+plt.title("Employee Attrition Distribution")
+
+# 2. Salary vs Attrition
+plt.subplot(2, 3, 2)
+sns.countplot(x='salary', hue='left', data=df_pd, palette='coolwarm')
+plt.title("Salary Level vs Attrition")
+
+# 3. Department vs Attrition
+plt.subplot(2, 3, 3)
+sns.countplot(x='sales', hue='left', data=df_pd, palette='mako')
+plt.title("Department vs Attrition")
+plt.xticks(rotation=45)
+
+# 4. Satisfaction Distribution
+plt.subplot(2, 3, 4)
+sns.histplot(data=df_pd, x='satisfaction_level', hue='left', kde=True)
+plt.title("Satisfaction Level Distribution by Attrition")
+
+# 5. Actual vs Predicted
+plt.subplot(2, 3, 5)
+plt.hist([pdf['label'], pdf['prediction']], label=['Actual', 'Predicted'], bins=2)
+plt.legend()
+plt.title("Actual vs Predicted Attrition")
+
+# 6. Correlation Heatmap
+plt.subplot(2, 3, 6)
+corr = df_pd[['satisfaction_level', 'last_evaluation', 'number_project',
+              'average_montly_hours', 'time_spend_company',
+              'Work_accident', 'promotion_last_5years', 'left']].corr()
+sns.heatmap(corr, annot=True, cmap="coolwarm")
+plt.title("Feature Correlation Heatmap")
+
+plt.tight_layout()
+plt.show()
+
+# ---------------------------------------------
+# End of Project
+# ---------------------------------------------
+spark.stop()
